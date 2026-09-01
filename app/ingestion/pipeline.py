@@ -15,21 +15,39 @@ from app.categorize.rules import categorize
 from app.config.filters import build_gmail_query
 from app.db.models import SyncLog, Transaction
 from app.db.session import get_session
-from app.gmail_client.auth import get_gmail_service
-from app.gmail_client.fetch import get_header, get_message, get_plain_text_body, list_message_ids
+from app.gmail_client.auth import get_credentials, get_gmail_service
+from app.gmail_client.fetch import (
+    get_header,
+    get_message,
+    get_messages_concurrent,
+    get_plain_text_body,
+    list_message_ids,
+)
 from app.parsers.registry import parse_email
 
 
-def sync(max_results: int = 100, service=None) -> dict[str, int]:
-    """Run a sync. If `service` is omitted, builds one via the local CLI
-    OAuth flow (file-based token) — used by the CLI entrypoint. The hosted
-    dashboard instead builds a service from the DB-stored token and passes
-    it in directly, since the local flow can't run on a remote server.
+def sync(max_results: int = 100, service=None, creds=None) -> dict[str, int]:
+    """Run a sync.
+
+    - `creds` (a google.oauth2.credentials.Credentials): fetches messages
+      concurrently over a small thread pool — much faster for real syncs.
+      Both the local CLI and the dashboard pass this.
+    - `service` only, no `creds`: fetches sequentially, one request at a
+      time. Kept for tests, which mock individual Gmail calls.
+    - neither: builds local-flow credentials via get_gmail_service() (file
+      token cache) — old default, kept for backward compatibility.
     """
-    if service is None:
+    if service is None and creds is None:
         service = get_gmail_service()
+    if service is None:
+        from googleapiclient.discovery import build
+
+        service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+
     query = build_gmail_query()
     message_ids = list_message_ids(service, query=query, max_results=max_results)
+
+    messages = get_messages_concurrent(creds, message_ids) if creds is not None else None
 
     scanned = 0
     added = 0
@@ -40,7 +58,7 @@ def sync(max_results: int = 100, service=None) -> dict[str, int]:
     try:
         for msg_id in message_ids:
             scanned += 1
-            message = get_message(service, msg_id)
+            message = messages[msg_id] if messages is not None else get_message(service, msg_id)
             sender = get_header(message, "From") or ""
             subject = get_header(message, "Subject") or ""
             date_header = get_header(message, "Date")
@@ -103,7 +121,7 @@ def main() -> None:
     parser.add_argument("--max", type=int, default=100, help="Max emails to scan (default: 100)")
     args = parser.parse_args()
 
-    summary = sync(max_results=args.max)
+    summary = sync(max_results=args.max, creds=get_credentials())
 
     print("Sync complete.")
     print(f"  Emails scanned:       {summary['emails_scanned']}")

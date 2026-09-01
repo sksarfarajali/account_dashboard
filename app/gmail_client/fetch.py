@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from googleapiclient.discovery import Resource
+import httplib2
+from google.oauth2.credentials import Credentials
+from google_auth_httplib2 import AuthorizedHttp
+from googleapiclient.discovery import Resource, build
 
 from app.config.filters import build_gmail_query
 
@@ -27,6 +32,41 @@ def list_message_ids(
 
 def get_message(service: Resource, message_id: str) -> dict[str, Any]:
     return service.users().messages().get(userId="me", id=message_id, format="full").execute()
+
+
+_thread_local = threading.local()
+
+
+def _thread_service(creds: Credentials) -> Resource:
+    """Gmail API's http transport isn't thread-safe, so each worker thread
+    gets its own Resource (built once per thread, reused across calls).
+    """
+    if not hasattr(_thread_local, "service"):
+        http = AuthorizedHttp(creds, http=httplib2.Http())
+        _thread_local.service = build("gmail", "v1", http=http, cache_discovery=False)
+    return _thread_local.service
+
+
+def get_messages_concurrent(
+    creds: Credentials, message_ids: list[str], max_workers: int = 10
+) -> dict[str, dict[str, Any]]:
+    """Fetch multiple messages in parallel. Gmail has no bulk-get endpoint —
+    each message is its own request — so fetching them one at a time in a
+    loop means total time scales linearly with inbox matches (100 emails
+    could mean 100 sequential round-trips). Fanning them out over a small
+    thread pool instead cuts that by roughly `max_workers`x.
+    """
+
+    def _fetch(msg_id: str) -> tuple[str, dict[str, Any]]:
+        return msg_id, get_message(_thread_service(creds), msg_id)
+
+    results: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_fetch, msg_id) for msg_id in message_ids]
+        for future in as_completed(futures):
+            msg_id, message = future.result()
+            results[msg_id] = message
+    return results
 
 
 def get_header(message: dict[str, Any], name: str) -> str | None:

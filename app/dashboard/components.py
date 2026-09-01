@@ -8,7 +8,7 @@ from app.db.session import get_session
 from app.gmail_client.auth import (
     build_web_flow,
     clear_credentials_in_db,
-    get_gmail_service_from_db,
+    get_credentials,
     load_credentials_from_db,
     save_credentials_to_db,
 )
@@ -33,7 +33,11 @@ def render_sync_sidebar() -> None:
         _render_local_flow()
 
 
-def _render_sync_now(service_getter) -> None:
+def _render_sync_now(creds_getter) -> None:
+    """`creds_getter` is called lazily, only once "Sync now" is actually
+    clicked — it may run the local browser-login flow the first time, which
+    should never happen just from loading the page.
+    """
     summary = last_sync_summary()
     if summary:
         st.sidebar.caption(f"Last sync: {summary['last_sync_at']}")
@@ -49,7 +53,7 @@ def _render_sync_now(service_getter) -> None:
             try:
                 from app.ingestion.pipeline import sync
 
-                result = sync(max_results=100, service=service_getter())
+                result = sync(max_results=100, creds=creds_getter())
                 status.update(label="Sync complete", state="complete")
                 st.sidebar.success(
                     f"Added {result['transactions_added']} new transactions "
@@ -72,13 +76,8 @@ def _render_sync_now(service_getter) -> None:
 
 
 def _render_local_flow() -> None:
-    def _get_service():
-        from app.gmail_client.auth import get_gmail_service
-
-        return get_gmail_service()
-
     st.sidebar.caption("Using local OAuth (credentials.json on disk).")
-    _render_sync_now(_get_service)
+    _render_sync_now(get_credentials)
 
 
 # --- Hosted flow: browser redirect through Google, token stored in DB ----
@@ -129,11 +128,14 @@ def _render_hosted_flow() -> None:
         session.close()
         st.rerun()
 
-    def _get_service():
+    def _get_creds():
         session = get_session()
         try:
-            return get_gmail_service_from_db(session)
+            fresh = load_credentials_from_db(session)
+            if fresh is None:
+                raise RuntimeError("No stored Gmail credentials — connect Gmail first.")
+            return fresh
         finally:
             session.close()
 
-    _render_sync_now(_get_service)
+    _render_sync_now(_get_creds)
