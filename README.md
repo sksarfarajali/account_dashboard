@@ -143,6 +143,64 @@ streamlit run app/dashboard/Home.py
 Then open the URL Streamlit prints (usually `http://localhost:8501`). The
 **Sync now** button in the sidebar re-runs step 4 from inside the UI.
 
+## 7. Deploying to Streamlit Community Cloud (optional)
+
+Running locally (steps 1–6) is the simplest and most private option — skip
+this section unless you specifically want a hosted, browser-accessible
+version.
+
+**Why this needs different code than local:** the local OAuth flow works by
+opening a browser *on the same machine* that's running the script, and
+caches the token to a local file. Neither works on a hosted server — the
+browser is on your laptop, the server is somewhere else, and a hosted app's
+disk resets on every restart. So the hosted path uses a different (still
+`gmail.readonly`-only) OAuth flow: you click **Connect Gmail** in the
+sidebar, it redirects to Google, Google redirects back to the app's own
+URL with an authorization code, and the resulting refresh token is stored
+in Postgres instead of a local file. This is already built — you just need
+to provision the pieces below.
+
+1. **Cloud Postgres.** Streamlit Cloud can't reach a database on your own
+   machine. Create a free Postgres instance yourself — e.g. at
+   **neon.tech** or **supabase.com** (sign up, create a project, copy the
+   connection string). You'll need it in step 4.
+2. **A second, "Web application" OAuth client.** The `credentials.json`
+   from step 2 is a *Desktop app* client and only works for the local flow.
+   In the same Google Cloud project:
+   - **APIs & Services** → **Credentials** → **Create Credentials** →
+     **OAuth client ID** → Application type: **Web application**.
+   - Name it e.g. `Finance Dashboard Web`. Leave **Authorized redirect
+     URIs** empty for now — you'll add it in step 5 once you know the
+     app's URL. Click **Create**.
+   - Note the **Client ID** and **Client secret** shown — you'll need both.
+3. **Push this repo to GitHub** if you haven't already (`git push`).
+4. **Deploy on Streamlit Cloud.**
+   - Go to **share.streamlit.io**, sign in with GitHub.
+   - **New app** → pick this repo/branch → main file path:
+     `app/dashboard/Home.py` → **Deploy**.
+   - It will fail to fully load until secrets are set (next step) — that's
+     expected.
+5. **Add secrets.** In the app's **Settings** → **Secrets**, paste (see
+   `.streamlit/secrets.toml.example` for the template):
+   ```toml
+   DATABASE_URL = "postgresql+psycopg2://user:password@host:5432/dbname?sslmode=require"
+   GMAIL_CLIENT_ID = "...apps.googleusercontent.com"
+   GMAIL_CLIENT_SECRET = "..."
+   REDIRECT_URI = "https://your-app-name.streamlit.app"
+   ```
+   Use the DB connection string from step 1, and the Web client ID/secret
+   from step 2. `REDIRECT_URI` is the URL Streamlit Cloud assigned your app
+   (visible in the app's address bar / settings once deployed).
+6. **Register the redirect URI with Google.** Go back to the Web OAuth
+   client from step 2 → **Authorized redirect URIs** → add the exact same
+   `REDIRECT_URI` value → **Save**.
+7. **Create the tables once.** From your local machine, with `DATABASE_URL`
+   in `.env` pointed at the *cloud* Postgres instead of your local one, run
+   `python -m app.db.init_db`.
+8. Reload the deployed app. Click **Connect Gmail** in the sidebar, approve
+   read-only access, and you'll land back on the dashboard connected. Use
+   **Sync now** to pull transactions.
+
 ## Adding a new bank
 
 The filter list and parsers are designed to grow over time without

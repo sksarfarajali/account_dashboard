@@ -36,3 +36,23 @@ class SyncLog(Base):
     last_sync_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     emails_scanned: Mapped[int] = mapped_column(default=0)
     transactions_added: Mapped[int] = mapped_column(default=0)
+
+
+class GmailToken(Base):
+    """Single-row table holding the Gmail OAuth refresh token for the
+    hosted (web) OAuth flow. Not used by the local CLI flow, which caches
+    its token in a local token.json file instead. Needed because a hosted
+    Streamlit app's disk is ephemeral and resets on every restart/redeploy.
+    """
+
+    __tablename__ = "gmail_token"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    refresh_token: Mapped[str] = mapped_column(String(512))
+    token_uri: Mapped[str] = mapped_column(String(255))
+    client_id: Mapped[str] = mapped_column(String(255))
+    client_secret: Mapped[str] = mapped_column(String(255))
+    scopes: Mapped[str] = mapped_column(String(255))
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -20,8 +20,14 @@ from app.gmail_client.fetch import get_header, get_message, get_plain_text_body,
 from app.parsers.registry import parse_email
 
 
-def sync(max_results: int = 100) -> dict[str, int]:
-    service = get_gmail_service()
+def sync(max_results: int = 100, service=None) -> dict[str, int]:
+    """Run a sync. If `service` is omitted, builds one via the local CLI
+    OAuth flow (file-based token) — used by the CLI entrypoint. The hosted
+    dashboard instead builds a service from the DB-stored token and passes
+    it in directly, since the local flow can't run on a remote server.
+    """
+    if service is None:
+        service = get_gmail_service()
     query = build_gmail_query()
     message_ids = list_message_ids(service, query=query, max_results=max_results)
 

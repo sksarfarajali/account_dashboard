@@ -12,6 +12,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# Windows consoles default to a legacy codepage that can't display emoji/
+# non-Latin characters often found in real email subjects — switch stdout
+# to UTF-8 so those don't crash the script.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except AttributeError:
+    pass
+
 from app.gmail_client.auth import get_gmail_service
 from app.gmail_client.fetch import get_header, get_message
 
